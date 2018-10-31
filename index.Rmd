@@ -1,0 +1,134 @@
+---
+title: "Automated Prediction of Athletic Exercise Quality based on readings from Movement Sensors"
+author: "Katarzyna Bojarska"
+date: "2018 10 26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache = T, echo = T, warning = F,message = F,collapse = F)
+```
+
+## Executive Summary  
+The aim of the project was to use data from movement sensors on the belt, forearm, arm, and dumbell of 6 athletes to predict the manner in which they did the Unilateral Dumbbell Biceps Curl. They were asked to perform one set of 10 repetitions of the exercise in five different ways: exactly according to the specification or making one of 4 common mistakes. If automated detection of the quality of exercise is possible, it can be used for automated feedback, leading potentially to improvement of athletic achievement and reduction of the risk of injury. More information is available from the website here: <http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset). 
+We developed a random forest model that was capable of correctly predicting the quality of exercise in around 99.5% of cases.
+
+## Preparation of the dataset  
+```{r preparation}
+#load the libraries
+library(caret); library(dplyr); library(randomForest); library("doParallel"); library(ggplot2)
+#load the training and testing data
+if(!file.exists("./pml-training.csv")) {
+    fileUrl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    download.file(fileUrl1, destfile = "./pml-training.csv")}
+if(!file.exists("./pml-testing.csv")) {
+    fileUrl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(fileUrl2, destfile = "./pml-testing.csv")}
+#name the training and testing datasets
+training = read.csv("pml-training.csv")
+testing = read.csv("pml-testing.csv")
+#display the properties of both datasets
+names(training)
+```
+
+The initial dataset consisted of `r dim(training)[1]` observations of `r dim(training)[2]` variables. Beside index, user identification and time related data specific for individual users, the dataset contained three-dimensional raw data from accelerometer, gyroscope and magnetometer - sensors mounted in the users' glove, armband, lumbar belt and dumbbell. The researchers calculated also eight features: mean, variance, standard deviation, max, min, amplitude, kurtosis and skewness for the Euler angles of each of the four sensors, generating in total 96 derived feature sets. Most of the derived variables were later excluded from the analysis because of large amount of missing data. The dependent variable was the manner in which the athletes performed the exercise: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). 
+
+```{r cleaning}
+#identify the number of missing values for each variable
+missingi <- data.frame(mis = sapply(training, function(x) sum(is.na(x))))
+#calculate the proportion of missing values for each variable
+missingi$procmis <- round(missingi$mis/nrow(training),3)
+#display all levels of proportions of missing values
+table(missingi$procmis)
+#exclude variables with high amount of missing values from the dataset
+training <- training[,missingi$mis==0]
+#identify variables with near zero variance
+nzv_an <- nearZeroVar(training,saveMetrics = T)
+#exclude variables with near zero variance
+training <- training[,nzv_an$nzv=="FALSE"]
+new <- training[,-c(1:6)]
+#split the dataset for training and validation
+inTrain <- createDataPartition(y=new$classe,p=0.8, list=FALSE)
+train <- new[inTrain,]; val <- new[-inTrain,]
+```
+
+`r table(missingi$procmis)[1]` variables contained no missing values, while the remaining `r table(missingi$procmis)[2]` variables contained each exactly `r unique(missingi$mis)[2]` missing values out of `r nrow(training)` observations (`r round(unique(missingi$procmis),4)[2]*100`%). The latter were excluded from the dataset. The next step was to exclude variables with near zero variance. Finally, we excluded several user specific variables that wouldn't be suitable for prediction, such as names of the participants, row numbers and time stamps. The final dataset contained `r dim(new)[2]` variables, including one categorical, 5-level dependent variable, "classe", and 52 potential predictors, of which `r sum(data.frame(sapply(train,is.integer))[,1])` were integer and `r ncol(train)-sum(data.frame(sapply(train,is.integer))[,1])-sum(data.frame(sapply(train,is.factor))[,1])` were numeric.. It was then split into a training and validation subset, consisting of `r dim(train)[1]` and `r dim(val)[1]` observations, reslectively.  
+
+```{r expl_table}
+#display frequencies for the levels of dependent variable in the train dataset
+table(train$classe)
+```
+
+## Model fitting and testing  
+Our first choice to predict categorical dependent variable by numeric predictors was the random forest classification method. Random forest is an extension of bagging on classification/regression trees. It involves repeated bootstraping samples, testing various splits of classification trees and voting final model. This method doesn't require data normalization or log transformations and performs internal validation to assess OOB error.
+
+```{r training_rf}
+#enable parallel processing
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+#fit the random forest model on the training dataset
+rf<-randomForest(train$classe ~ ., data=train, prox=TRUE, ntree=500)
+rf
+```
+
+The procedure was capable of correctly classifying around 99.5% of the observations from the dataset. The estimated rate of OOB error was below 0.5%.  
+The importance of the predictor variables is listed and plotted below.
+
+```{r importance}
+#display the variable importance
+vimp <- as.data.frame(varImp(rf))
+vimp <- data.frame(names   = rownames(vimp),overall = vimp$Overall)
+vimp <- vimp[order(vimp$overall,decreasing = T),]
+vimp
+#plot ten most important variables
+p <- ggplot(vimp[1:10,], aes(x = reorder(names, -overall), y = overall)) +
+         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=30,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance ascending (ten most important variables)") +
+  xlab("Variable name") + ylab("Variable importance")
+p
+#plot all the variables ordered by importance
+p1 <- ggplot(vimp, aes(x = reorder(names, -overall), y = overall)) +
+         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=45,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance ascending") +
+  xlab("Variable name") + ylab("Variable importance")
+p1
+```
+
+As we can see, the variables which contributed to the model the most, were mostly readings from belt and dumbbell devices, followed by the sensors attached to the forarm. Sensors mounted on the athlete's arm were apparently of lesser importance.
+
+## Validation
+
+```{r validation}
+#test the model on the validation dataset
+pred_val <- predict(rf, val)
+cm <- confusionMatrix(pred_val, val$classe)
+cm
+```
+
+We then tested the algorithm on the validation dataset. The model predicted the value of dependent variable with very high accuracy of `r cm$overall['Accuracy']`. The algorithm was able to classify almost all observations to the correct categories. The plot below demonstrates observations from the validation dataset, correctly and incorrectly classified into categories.
+
+```{r plotfit}
+#plot actual vs. predicted datapoints
+val$Prediction <- pred_val==val$classe
+ggplot(aes(x=classe, y = pred_val,colour=Prediction), data = val) + geom_jitter(size=0.8,alpha=0.8,width = 0.3, height = 0.3) + ggtitle("Actual and predicted values") +
+  xlab("Actual category") + ylab("Predicted category")
+```
+
+Only few datapoints fall outside the correct categories. As we can see, the random forest algorithm correctly classified almost all observations.
+
+Lastly, we tested our model on the testing dataset and predicted the following values. External validation on the Coursera Machine Learning website confirmed the accuracy of predictions.  
+
+```{r testing}
+pred_testing <- predict(rf, testing)
+pred_testing
+```
+
+```{r undoParallel}
+#disable parallel processing
+stopCluster(cl)
+```
+
+## Summary  
+The random forest procedure performed on the readings from movement sensors allowed for very accurate classification of almost all observations in the validation dataset into the correct categories. This means that the correct performance of athletic exercise as well as common mistakes can be accurately detected by algorithms. This allows for designing devices capable of providing precise automatic guidance and feedback to athletes, which may speed up the development of athletic skills and prevent injuries resulting from unrecognized mistakes.  
+Among the limitations of the study it is worth mentioning that the "common mistakes" made by the study participants were artificially staged and might have been exagerated, which may not necessarily resemble more nuanced instances of real mistakes made by actual athletes in real life situations. The actual mistakes may have different degress, they can also consist of a mixture of various types of errors or contain various proportion of correct and incorrect movements. This means that the sensor readings from real-life training sessions might be more blurred than those obtained in the study. In this case the predictive value of the model might turn out to be much lower.
+
+##References
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
