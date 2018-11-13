@@ -262,7 +262,7 @@ vimp
 ```r
 #plot ten most important variables
 p <- ggplot(vimp[1:10,], aes(x = reorder(names, -overall), y = overall)) +
-         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=30,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance ascending (ten most important variables)") +
+         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=30,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance descending (ten most important variables)") +
   xlab("Variable name") + ylab("Variable importance")
 p
 ```
@@ -272,7 +272,7 @@ p
 ```r
 #plot all the variables ordered by importance
 p1 <- ggplot(vimp, aes(x = reorder(names, -overall), y = overall)) +
-         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=45,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance ascending") +
+         geom_bar(stat = "identity") + theme(axis.text.x=element_text(angle=45,vjust=.8, hjust=0.8)) + ggtitle("Plot of variable importance descending") +
   xlab("Variable name") + ylab("Variable importance")
 p1
 ```
